@@ -28,14 +28,59 @@ pub fn Module(comptime Params: anytype) @TypeOf(Params) {
     return Params;
 }
 
-fn MergeAllComponents(comptime modules: anytype) type {
+pub fn Modules(modules: anytype) @TypeOf(modules) {
+    // TODO: validate it's a tuple of Module(anytype)
+    return modules;
+}
+
+/// Extracts namespaces components from modules like this:
+///
+/// ```
+/// .{
+///     .renderer = .{
+///         .components = .{
+///             .location = Vec3,
+///             .rotation = Vec3,
+///         },
+///         ...
+///     },
+///     .physics2d = .{
+///         .components = .{
+///             .location = Vec2
+///             .velocity = Vec2,
+///         },
+///         ...
+///     },
+/// }
+/// ```
+///
+/// Into a namespaced component type like this:
+///
+/// ```
+/// .{
+///     .renderer = .{
+///         .location = Vec3,
+///         .rotation = Vec3,
+///     },
+///     .physics2d = .{
+///         .location = Vec2
+///         .velocity = Vec2,
+///     },
+/// }
+/// ```
+///
+fn NamespacedComponents(comptime modules: anytype) type {
     var fields: []const StructField = &[0]StructField{};
     inline for (std.meta.fields(@TypeOf(modules))) |module_field| {
         const module = @field(modules, module_field.name);
         if (@hasField(@TypeOf(module), "components")) {
-            inline for (std.meta.fields(@TypeOf(module.components))) |component_field| {
-                fields = fields ++ [_]std.builtin.Type.StructField{component_field};
-            }
+            fields = fields ++ [_]std.builtin.Type.StructField{.{
+                .name = module_field.name,
+                .field_type = @TypeOf(module.components),
+                .default_value = null,
+                .is_comptime = false,
+                .alignment = @alignOf(@TypeOf(module.components)),
+            }};
         }
     }
     return @Type(.{
@@ -48,7 +93,41 @@ fn MergeAllComponents(comptime modules: anytype) type {
     });
 }
 
-fn Globals(comptime modules: anytype) type {
+/// Extracts namespaced globals from modules like this:
+///
+/// ```
+/// .{
+///     .renderer = .{
+///         .globals = struct{
+///             foo: *Bar,
+///             baz: Bam,
+///         },
+///         ...
+///     },
+///     .physics2d = .{
+///         .globals = struct{
+///             foo: *Instance,
+///         },
+///         ...
+///     },
+/// }
+/// ```
+///
+/// Into a namespaced global type like this:
+///
+/// ```
+/// struct{
+///     renderer: struct{
+///         foo: *Bar,
+///         baz: Bam,
+///     },
+///     physics2d: struct{
+///         foo: *Instance,
+///     },
+/// }
+/// ```
+///
+fn NamespacedGlobals(comptime modules: anytype) type {
     var fields: []const StructField = &[0]StructField{};
     inline for (std.meta.fields(@TypeOf(modules))) |module_field| {
         const module = @field(modules, module_field.name);
@@ -60,17 +139,6 @@ fn Globals(comptime modules: anytype) type {
                 .is_comptime = false,
                 .alignment = @alignOf(module.globals),
             }};
-        }
-        if (@hasField(@TypeOf(module), "absolute_globals")) {
-            inline for (std.meta.fields(module.absolute_globals)) |absolute_global_field| {
-                fields = fields ++ [_]std.builtin.Type.StructField{.{
-                    .name = absolute_global_field.name,
-                    .field_type = absolute_global_field.field_type,
-                    .default_value = null,
-                    .is_comptime = false,
-                    .alignment = @alignOf(absolute_global_field.field_type),
-                }};
-            }
         }
     }
     return @Type(.{
@@ -84,12 +152,12 @@ fn Globals(comptime modules: anytype) type {
 }
 
 pub fn World(comptime modules: anytype) type {
-    const all_components = MergeAllComponents(modules);
+    const all_components = NamespacedComponents(modules);
     return struct {
         allocator: Allocator,
         systems: std.StringArrayHashMapUnmanaged(System) = .{},
         entities: Entities(all_components),
-        globals: Globals(modules),
+        globals: NamespacedGlobals(modules),
 
         const Self = @This();
         pub const System = fn (adapter: *Adapter(modules)) void;
@@ -107,8 +175,15 @@ pub fn World(comptime modules: anytype) type {
             world.entities.deinit();
         }
 
-        pub fn get(world: *Self, global_tag: anytype) @TypeOf(@field(world.globals, std.meta.tagName(global_tag))) {
-            return comptime @field(world.globals, std.meta.tagName(global_tag));
+        /// Gets a global value called `.global_tag` from the module named `.module_tag`
+        pub fn get(world: *Self, module_tag: anytype, global_tag: anytype) @TypeOf(@field(
+            @field(world.globals, std.meta.tagName(module_tag)),
+            std.meta.tagName(global_tag),
+        )) {
+            return comptime @field(
+                @field(world.globals, std.meta.tagName(module_tag)),
+                std.meta.tagName(global_tag),
+            );
         }
 
         pub fn register(world: *Self, name: []const u8, system: System) !void {
