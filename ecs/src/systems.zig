@@ -199,6 +199,22 @@ pub fn World(comptime modules: anytype) type {
             );
         }
 
+        /// Sets a global value called `.global_tag` in the module named `.module_tag`
+        pub fn set(
+            world: *Self,
+            comptime module_tag: anytype,
+            comptime global_tag: anytype,
+            value: @TypeOf(@field(
+                @field(world.globals, std.meta.tagName(module_tag)),
+                std.meta.tagName(global_tag),
+            )),
+        ) void {
+            comptime @field(
+                @field(world.globals, std.meta.tagName(module_tag)),
+                std.meta.tagName(global_tag),
+            ) = value;
+        }
+
         pub fn register(world: *Self, name: []const u8, system: System) !void {
             try world.systems.put(world.allocator, name, system);
         }
