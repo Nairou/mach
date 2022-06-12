@@ -9,7 +9,12 @@ pub const ecs = @import("ecs");
 
 /// The core module of Mach engine. This enables access to *Core APIs, such as
 /// to `.setOptions(.{.title = "foobar"})`, or to access the GPU `.device`.
-pub const module = ecs.Singleton(*Engine);
+pub const module = ecs.Module(.{
+    .absolute_globals = struct{
+        core: *Engine,
+        device: gpu.Device,
+    },
+});
 
 pub fn App(
     modules: anytype,
@@ -22,7 +27,8 @@ pub fn App(
             app.* = .{
                 .engine = try ecs.World(modules).init(core.allocator),
             };
-            app.*.engine.singletons.core = core;
+            app.*.engine.globals.core = core;
+            app.*.engine.globals.device = core.device;
             try init(&app.engine);
         }
 
