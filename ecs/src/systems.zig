@@ -7,11 +7,12 @@ const StructField = std.builtin.Type.StructField;
 const Entities = @import("entities.zig").Entities;
 
 pub fn Adapter(modules: anytype) type {
+    const all_components = NamespacedComponents(modules);
     return struct {
         world: *World(modules),
 
         const Self = @This();
-        pub const Iterator = Entities(modules).Iterator;
+        pub const Iterator = Entities(all_components).Iterator;
 
         pub fn query(adapter: *Self, components: []const []const u8) Iterator {
             return adapter.world.entities.query(components);
@@ -31,6 +32,31 @@ pub fn Module(comptime Params: anytype) @TypeOf(Params) {
 pub fn Modules(modules: anytype) @TypeOf(modules) {
     // TODO: validate it's a tuple of Module(anytype)
     return modules;
+}
+
+/// Returns the namespaced components struct **type**.
+fn NamespacedComponents(comptime modules: anytype) type {
+    var fields: []const StructField = &[0]StructField{};
+    inline for (std.meta.fields(@TypeOf(modules))) |module_field| {
+        const module = @field(modules, module_field.name);
+        if (@hasField(@TypeOf(module), "components")) {
+            fields = fields ++ [_]std.builtin.Type.StructField{.{
+                .name = module_field.name,
+                .field_type = @TypeOf(module.components),
+                .default_value = null,
+                .is_comptime = false,
+                .alignment = @alignOf(@TypeOf(module.components)),
+            }};
+        }
+    }
+    return @Type(.{
+        .Struct = .{
+            .layout = .Auto,
+            .is_tuple = false,
+            .fields = fields,
+            .decls = &[_]std.builtin.Type.Declaration{},
+        },
+    });
 }
 
 /// Extracts namespaces components from modules like this:
@@ -69,28 +95,15 @@ pub fn Modules(modules: anytype) @TypeOf(modules) {
 /// }
 /// ```
 ///
-fn NamespacedComponents(comptime modules: anytype) type {
-    var fields: []const StructField = &[0]StructField{};
+fn namespacedComponents(comptime modules: anytype) NamespacedComponents(modules) {
+    var x: NamespacedComponents(modules) = undefined;
     inline for (std.meta.fields(@TypeOf(modules))) |module_field| {
         const module = @field(modules, module_field.name);
         if (@hasField(@TypeOf(module), "components")) {
-            fields = fields ++ [_]std.builtin.Type.StructField{.{
-                .name = module_field.name,
-                .field_type = @TypeOf(module.components),
-                .default_value = null,
-                .is_comptime = false,
-                .alignment = @alignOf(@TypeOf(module.components)),
-            }};
+            @field(x, module_field.name) = module.components;
         }
     }
-    return @Type(.{
-        .Struct = .{
-            .layout = .Auto,
-            .is_tuple = false,
-            .fields = fields,
-            .decls = &[_]std.builtin.Type.Declaration{},
-        },
-    });
+    return x;
 }
 
 /// Extracts namespaced globals from modules like this:
@@ -152,7 +165,7 @@ fn NamespacedGlobals(comptime modules: anytype) type {
 }
 
 pub fn World(comptime modules: anytype) type {
-    const all_components = NamespacedComponents(modules);
+    const all_components = namespacedComponents(modules);
     return struct {
         allocator: Allocator,
         systems: std.StringArrayHashMapUnmanaged(System) = .{},
